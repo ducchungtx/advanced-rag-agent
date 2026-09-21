@@ -11,10 +11,13 @@ venv/
 __pycache__/
 *.py[cod]
 *.egg-info/
+dist/
+build/
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
 
-# RAG data / vector DB
+# RAG data / vector DB (giữ PDF nguồn, ignore index)
 data/chroma/
 data/faiss/
 *.bin

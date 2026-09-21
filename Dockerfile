@@ -1,6 +1,16 @@
 FROM python:3.11-slim
+
 WORKDIR /app
-COPY . .
-RUN pip install uv
-RUN uv pip install --system langchain langchain-google-genai chromadb pypdf fastapi uvicorn
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+RUN pip install --no-cache-dir uv
+
+COPY pyproject.toml README.md ./
+COPY app ./app
+
+RUN uv pip install --system .
+
+COPY data ./data
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
