@@ -22,7 +22,8 @@ def run_agent(query: str) -> dict:
             sources.append(source)
 
     return {
-        "answer": response.content,
+        # Gemini/LangChain có thể trả content dạng list block; .text luôn ra str
+        "answer": response.text,
         "query": query,
         "sources": sources,
     }
