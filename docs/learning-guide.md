@@ -96,9 +96,9 @@ flowchart TB
 
 ## 5. Agent vs RAG thuần — lộ trình tư duy
 
-**Phase 1 (đang chạy):** luôn retrieve rồi trả lời — đơn giản, ổn cho “chỉ hỏi luật”.
+**Phase 1 (nền tảng):** luôn retrieve rồi trả lời — đơn giản, ổn cho “chỉ hỏi luật”.
 
-**Phase 2 (đang chuẩn bị):** Agent **tự chọn tool** (ReAct + Function Calling):
+**Phase 2 (đã chạy):** Agent **tự chọn tool** (ReAct + Function Calling):
 
 - `rag_search` → kho đất đai nội bộ  
 - `get_exchange_rate` → API ngoại vi (tỷ giá…)  

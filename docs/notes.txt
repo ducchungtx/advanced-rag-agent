@@ -4,5 +4,6 @@ Tài liệu chính:
 - docs/architecture.md — kiến trúc hệ thống + sơ đồ Mermaid
 - docs/learning-guide.md — hướng dẫn học tập / onboarding
 
-Trạng thái: Phase 1 — RAG chat qua POST /chat; ingest PDF/DOCX/DOC; tool scaffold + Observation an toàn.
-Tiếp theo: ReAct loop, Redis semantic cache, RBAC, Ragas eval.
+Trạng thái: Phase 2 đã implement — ReAct + Function Calling, Redis semantic cache (TTL + corpus_version), RBAC metadata where.
+Cần: docker compose up -d redis; sau khi thêm audience metadata phải re-ingest; tăng CORPUS_VERSION khi đổi index.
+Tiếp theo (Phase 3): Rerank 20→5, Ragas Faithfulness.

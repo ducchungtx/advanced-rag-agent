@@ -175,16 +175,29 @@ def get_legal_text_splitter() -> RecursiveCharacterTextSplitter:
     )
 
 
-def _attach_source_metadata(documents: list[Document], path: Path) -> None:
+def _attach_source_metadata(
+    documents: list[Document],
+    path: Path,
+    *,
+    audience: str = "public",
+) -> None:
+    """Gắn metadata nguồn + audience (RBAC pre-filter trong Chroma)."""
     for doc in documents:
         doc.metadata.setdefault("source", str(path))
         doc.metadata.setdefault("filename", path.name)
         doc.metadata.setdefault("filetype", path.suffix.lower().lstrip("."))
+        doc.metadata.setdefault("audience", audience)
 
 
 def _persist_documents(documents: list[Document]) -> int:
     splitter = get_legal_text_splitter()
     chunks = splitter.split_documents(documents)
+    # Sau re-ingest: tăng CORPUS_VERSION trong .env để semantic cache cũ miss.
+    print(
+        f"Ingest note: corpus_version hiện tại={settings.corpus_version}. "
+        "Sau khi đổi index, tăng CORPUS_VERSION để invalidate semantic cache.",
+        flush=True,
+    )
     _write_chunks_with_rate_limit(chunks)
     return len(chunks)
 

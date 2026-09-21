@@ -29,6 +29,9 @@ class Settings(BaseSettings):
 
     # Redis (memory / cache — phase 2)
     redis_url: str = "redis://localhost:6379/0"
+    cache_ttl_seconds: int = 3600
+    corpus_version: str = "1"
+    cache_similarity_threshold: float = 0.92
 
     # RAG — chunk ~1000 ổn cho VBPL nếu separators theo Điều/Khoản
     chunk_size: int = 1000

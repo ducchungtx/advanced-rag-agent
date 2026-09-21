@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import urllib.error
+import urllib.request
 from typing import Any, Callable
+
+from langchain_core.tools import StructuredTool
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +36,22 @@ EXCHANGE_RATE_DESCRIPTION = (
     "kho tài liệu nội bộ — các câu hỏi đó dùng rag_search."
 )
 
+# API công khai, không cần key; hỗ trợ VND (khác Frankfurter/ECB).
+EXCHANGE_RATE_API_URL = "https://open.er-api.com/v6/latest/{base}"
+EXCHANGE_RATE_TIMEOUT_SECONDS = 10
+
+
+class RagSearchInput(BaseModel):
+    query: str = Field(..., description="Câu hỏi pháp lý ngắn gọn bằng tiếng Việt")
+
+
+class ExchangeRateInput(BaseModel):
+    base: str = Field(default="USD", description="Mã tiền tệ gốc, ví dụ USD")
+    quote: str = Field(default="VND", description="Mã tiền tệ đích, ví dụ VND")
+
 
 def get_available_tools() -> list[dict]:
-    """Danh sách tool metadata — sẽ gắn vào LLM tool-calling."""
+    """Danh sách tool metadata — gắn vào LLM tool-calling."""
     return [
         {
             "name": "rag_search",
@@ -44,6 +63,31 @@ def get_available_tools() -> list[dict]:
             "description": EXCHANGE_RATE_DESCRIPTION,
             "parameters": {"base": "str", "quote": "str"},
         },
+    ]
+
+
+def get_langchain_tools() -> list[StructuredTool]:
+    """Schema tools cho model.bind_tools — thực thi thật qua execute_tool."""
+
+    def _rag_search_stub(query: str) -> str:
+        return ""
+
+    def _exchange_rate_stub(base: str = "USD", quote: str = "VND") -> str:
+        return ""
+
+    return [
+        StructuredTool.from_function(
+            func=_rag_search_stub,
+            name="rag_search",
+            description=RAG_SEARCH_DESCRIPTION,
+            args_schema=RagSearchInput,
+        ),
+        StructuredTool.from_function(
+            func=_exchange_rate_stub,
+            name="get_exchange_rate",
+            description=EXCHANGE_RATE_DESCRIPTION,
+            args_schema=ExchangeRateInput,
+        ),
     ]
 
 
@@ -74,12 +118,18 @@ def format_tool_error_observation(
     )
 
 
-def execute_tool(tool_name: str, **kwargs: Any) -> str:
+def execute_tool(
+    tool_name: str,
+    *,
+    where: dict[str, Any] | None = None,
+    sources_out: list[str] | None = None,
+    **kwargs: Any,
+) -> str:
     """
     Chạy tool an toàn: mọi exception → Observation string, không raise lên API.
     ReAct loop luôn nhận str để nhét vào bước Observation.
     """
-    tool_map = build_tool_map()
+    tool_map = build_tool_map(where=where, sources_out=sources_out)
     fn = tool_map.get(tool_name)
     if fn is None:
         return format_tool_error_observation(
@@ -117,21 +167,61 @@ def execute_tool(tool_name: str, **kwargs: Any) -> str:
         return format_tool_error_observation(tool_name, exc, error_type=type_name)
 
 
-def build_tool_map() -> dict[str, Callable]:
-    """Map tên tool → hàm thực thi (phase 2)."""
+def fetch_exchange_rate(base: str = "USD", quote: str = "VND") -> str:
+    """Gọi API tỷ giá; raise ConnectionError/TimeoutError/ValueError khi lỗi."""
+    base_code = (base or "USD").strip().upper()
+    quote_code = (quote or "VND").strip().upper()
+    url = EXCHANGE_RATE_API_URL.format(base=base_code)
+
+    try:
+        with urllib.request.urlopen(url, timeout=EXCHANGE_RATE_TIMEOUT_SECONDS) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except TimeoutError as exc:
+        raise TimeoutError(f"Timeout khi gọi tỷ giá {base_code}/{quote_code}") from exc
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            raise RuntimeError(f"Rate limit tỷ giá HTTP {exc.code}") from exc
+        raise ConnectionError(f"HTTP {exc.code} khi gọi tỷ giá") from exc
+    except urllib.error.URLError as exc:
+        raise ConnectionError(f"Không kết nối được API tỷ giá: {exc.reason}") from exc
+
+    if payload.get("result") != "success":
+        raise ValueError(f"API tỷ giá trả lỗi: {payload.get('result')}")
+
+    rates = payload.get("rates") or {}
+    rate = rates.get(quote_code)
+    if rate is None:
+        raise ValueError(f"Không có tỷ giá {base_code}/{quote_code}")
+
+    updated = payload.get("time_last_update_utc") or payload.get("date") or "unknown"
+    return f"1 {base_code} = {rate} {quote_code} (updated={updated})"
+
+
+def build_tool_map(
+    *,
+    where: dict[str, Any] | None = None,
+    sources_out: list[str] | None = None,
+) -> dict[str, Callable]:
+    """Map tên tool → hàm thực thi."""
     from app.services.rag.retriever import retrieve_documents
 
     def rag_search(query: str) -> str:
-        docs = retrieve_documents(query)
+        docs = retrieve_documents(query, where=where)
+        if sources_out is not None:
+            for doc in docs:
+                source = doc.metadata.get("source")
+                if source and source not in sources_out:
+                    sources_out.append(source)
+        if not docs:
+            return (
+                "[TOOL_EMPTY] tool=rag_search\n"
+                "message=Không tìm thấy đoạn văn bản phù hợp trong kho nội bộ.\n"
+                "hint=Diễn đạt lại câu hỏi pháp lý hoặc bỏ bớt điều kiện."
+            )
         return "\n\n".join(doc.page_content for doc in docs)
 
     def get_exchange_rate(base: str = "USD", quote: str = "VND") -> str:
-        # Phase 2: gắn API ngoại vi thật.
-        # Lỗi kết nối/timeout/rate-limit: raise tại đây;
-        # execute_tool sẽ biến thành Observation, không sập API.
-        raise NotImplementedError(
-            f"get_exchange_rate({base}/{quote}) chưa được triển khai."
-        )
+        return fetch_exchange_rate(base=base, quote=quote)
 
     return {
         "rag_search": rag_search,

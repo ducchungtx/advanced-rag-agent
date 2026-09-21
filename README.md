@@ -1,17 +1,19 @@
 # Advanced RAG Agent
 
-Chat agent AI hỗ trợ nội bộ: **retrieve → reason → answer** (Gemini + Chroma), sẵn sàng mở rộng ReAct / tools.
+Chat agent AI hỗ trợ nội bộ: **retrieve → reason → answer** (Gemini + Chroma + ReAct tools).
 
 ## Cấu trúc
 
 ```
 app/
-├── api/          # FastAPI routers
-├── core/         # Config, env
+├── api/          # FastAPI routers (+ deps RBAC)
+├── core/         # Config, env, Redis client
 ├── models/       # Pydantic schemas
 ├── services/
 │   ├── rag/      # Ingest, retrieve, Chroma
-│   ├── agent/    # ReAct loop + tools (skeleton)
+│   ├── agent/    # ReAct loop + tools
+│   ├── cache/    # Semantic cache Redis
+│   ├── auth/     # RBAC role → where
 │   └── llm/      # Gemini client + prompts
 └── utils/
 data/             # tài liệu nguồn + chroma persist
@@ -31,22 +33,22 @@ Chi tiết hơn:
 
 ```bash
 # 1. Tạo venv + cài deps (khuyến nghị uv)
-uv venv
-uv pip install -e ".[dev]"
-
-# hoặc: python -m venv .venv && pip install -e ".[dev]"
+uv sync --all-extras
 
 # 2. Cấu hình env
 copy .env.example .env   # Windows
-# điền GOOGLE_API_KEY
+# điền GOOGLE_API_KEY; kiểm tra REDIS_URL, CORPUS_VERSION
 
-# 3. Ingest PDF/DOCX (nếu chưa có data/chroma)
-# Đặt file vào DATA_DIR (mặc định ./data/pdfs), hỗ trợ .pdf và .docx
-python -c "from app.services.rag.ingest import ingest_directory; print(ingest_directory())"
-# Hoặc một file: ingest_file("path/to/van-ban.docx")
+# 3. Bật Redis (semantic cache) — cần Docker Desktop
+docker compose up -d redis
 
-# 4. Chạy API
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+# 4. Ingest PDF/DOCX/DOC (gắn metadata audience=public)
+# Đặt file vào DATA_DIR (mặc định ./data/docs)
+uv run python -c "from app.services.rag.ingest import ingest_directory; print(ingest_directory())"
+
+# 5. Chạy API
+uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+# hoặc: make run
 ```
 
 Swagger UI: http://127.0.0.1:8000/docs
@@ -56,7 +58,7 @@ Swagger UI: http://127.0.0.1:8000/docs
 | Method | Path | Mô tả |
 |--------|------|--------|
 | GET | `/health` | Health check |
-| POST | `/chat` | Hỏi đáp RAG `{ "query": "..." }` |
+| POST | `/chat` | Hỏi đáp agent `{ "query": "..." }` + header tùy chọn `X-User-Role: citizen\|staff\|legal_staff` |
 
 ## Docker
 
@@ -70,8 +72,8 @@ Services: `api` (8000), `redis` (6379), `chromadb` (8001).
 
 | Phase | Nội dung |
 |-------|----------|
-| 1 (hiện tại) | RAG cơ bản: ingest PDF/DOCX → Chroma → Gemini |
-| 2 | ReAct agent + tools + Redis memory |
+| 1 | RAG cơ bản: ingest PDF/DOCX/DOC → Chroma → Gemini |
+| 2 (hiện tại) | ReAct + tools + Redis semantic cache + RBAC |
 | 3 | Reranker + Ragas eval |
 
 ## Scripts tiện ích

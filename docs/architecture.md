@@ -3,7 +3,7 @@
 > Tài liệu kỹ thuật cho vận hành / phát triển.  
 > Mục tiêu sản phẩm: agent trả lời kiến thức **quy định đất đai** dựa trên kho văn bản nội bộ, sẵn sàng mở rộng ReAct + tool ngoại vi.
 
-**Trạng thái:** Phase 1 runtime đã chạy; Phase 2–3 (ReAct đầy đủ, Semantic Cache, RBAC, Rerank, Ragas) đang scaffold / thiết kế theo đặc tả dưới đây.
+**Trạng thái:** Phase 1–2 runtime đã chạy (ReAct + Redis semantic cache + RBAC); Phase 3 (Rerank, Ragas) đang scaffold / thiết kế theo đặc tả dưới đây.
 
 Tài liệu học tập: [learning-guide.md](./learning-guide.md).
 
@@ -89,14 +89,14 @@ flowchart TB
 | Thành phần | Vai trò | Trạng thái |
 |------------|---------|------------|
 | FastAPI (`/health`, `/chat`) | HTTP, thin wrapper | ✅ |
-| Agent `run_agent` | Orchestrate retrieve → prompt → LLM | ✅ (pipeline thẳng) |
+| Agent `run_agent` | ReAct loop + tool-calling | ✅ |
 | RAG ingest | Load, chunk pháp lý, embed, persist Chroma | ✅ |
-| RAG retrieve | Similarity search top-k | ✅ |
+| RAG retrieve | Similarity search top-k (+ metadata `where`) | ✅ |
 | Gemini LLM + embeddings | Sinh câu trả lời / vector | ✅ |
-| Tools + `execute_tool` | Metadata tool + Observation an toàn khi lỗi | ✅ scaffold |
-| ReAct loop đầy đủ | Thought → Action → Observation lặp | 🔲 phase 2 |
-| Redis semantic cache | TTL + versioning, chặn câu hỏi lặp | 🔲 phase 2 |
-| RBAC metadata filter | Pre-filter `where` trong Chroma | 🔲 phase 2 |
+| Tools + `execute_tool` | Metadata tool + Observation an toàn khi lỗi | ✅ |
+| ReAct loop đầy đủ | Thought → Action → Observation lặp | ✅ |
+| Redis semantic cache | TTL + versioning, chặn câu hỏi lặp | ✅ |
+| RBAC metadata filter | Pre-filter `where` trong Chroma | ✅ |
 | Reranking | Lấy ~20 chunk → giữ top 5 | 🔲 phase 3 |
 | Ragas Faithfulness | LLM-as-a-judge, kiểm soát hallucination | 🔲 phase 3 |
 
@@ -217,7 +217,7 @@ sequenceDiagram
     Chat-->>Client: ChatResponse
 ```
 
-**Lưu ý:** Phase 1 gọi retrieve trực tiếp trong `run_agent`, chưa qua ReAct / Function Calling. Tool `rag_search` đã khai báo để phase 2 gắn vào loop.
+**Lưu ý:** Phase 2 dùng ReAct + Function Calling trong `run_agent` (`rag_search`, `get_exchange_rate` qua `execute_tool`). Semantic cache + RBAC `where` bọc ngoài vòng lặp. Rerank vẫn thuộc Phase 3.
 
 **Luồng mục tiêu (phase 2–3)** — cache → RBAC filter → retrieve rộng → rerank → LLM:
 
@@ -235,7 +235,7 @@ flowchart TB
 
 ---
 
-## 5. Agent Tools & an toàn Observation (scaffold)
+## 5. Agent Tools & an toàn Observation
 
 ```mermaid
 flowchart TB
@@ -254,7 +254,7 @@ flowchart TB
     end
 
     Meta --> Exec
-    Exec -->|str Observation| Loop[ReAct loop — phase 2]
+    Exec -->|str Observation| Loop[ReAct loop]
 ```
 
 **Hợp đồng Observation khi lỗi** (do `format_tool_error_observation`):
