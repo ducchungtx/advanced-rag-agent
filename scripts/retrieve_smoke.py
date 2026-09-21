@@ -3,8 +3,10 @@
 from app.services.rag.retriever import retrieve_documents
 
 if __name__ == "__main__":
-    query = "Thời gian ăn trưa là lúc mấy giờ?"
+    query = "Điều kiện chuyển nhượng quyền sử dụng đất theo Nghị định?"
     docs = retrieve_documents(query)
-    print(f"Đã tìm thấy {len(docs)} đoạn tài liệu liên quan nhất!")
+    print(f"FOUND={len(docs)}")
     for i, doc in enumerate(docs, 1):
-        print(f"\n--- Đoạn {i} ---\n{doc.page_content}")
+        src = doc.metadata.get("filename", "?")
+        preview = doc.page_content[:500].encode("utf-8", errors="replace").decode("utf-8")
+        print(f"\n--- chunk {i} ({src}) ---\n{preview}")

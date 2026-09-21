@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     # Google Gemini
     google_api_key: str = ""
     google_model: str = "gemini-2.0-flash"
-    embedding_model: str = "models/gemini-embedding-001"
+    embedding_model: str = "models/gemini-embedding-2"
 
     # Vector store
     vector_store: str = "chroma"
@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     chunk_size: int = 1000
     chunk_overlap: int = 200
     top_k: int = 4
-    data_dir: str = "./data/pdfs"  # hỗ trợ .pdf và .docx
+    data_dir: str = "./data/docs"  # hỗ trợ .pdf, .docx, .doc
 
     # LLM behavior
     temperature: float = 0.0

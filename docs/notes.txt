@@ -1,25 +1,8 @@
 Khung dự án Advanced RAG Agent (đã scaffold trong repo root).
 
-Cấu trúc mục tiêu:
-advanced-rag-agent/
-├── app/
-│   ├── api/                    # FastAPI endpoints
-│   ├── core/                   # config, env
-│   ├── models/                 # Pydantic schemas
-│   ├── services/
-│   │   ├── rag/                # ingest, retrieve, Chroma
-│   │   ├── agent/              # ReAct + tools (skeleton)
-│   │   └── llm/                # Gemini + prompts
-│   └── utils/
-├── data/
-├── eval/                       # Ragas scaffold
-├── tests/
-├── docs/architecture.md
-├── Dockerfile
-├── docker-compose.yml
-├── pyproject.toml
-├── .env.example
-└── README.md
+Tài liệu chính:
+- docs/architecture.md — kiến trúc hệ thống + sơ đồ Mermaid
+- docs/learning-guide.md — hướng dẫn học tập / onboarding
 
-Trạng thái: Phase 1 scaffold xong — RAG chat qua POST /chat.
-Tiếp theo: ReAct tools, Redis memory, Ragas eval, remote Chroma client.
+Trạng thái: Phase 1 — RAG chat qua POST /chat; ingest PDF/DOCX/DOC; tool scaffold + Observation an toàn.
+Tiếp theo: ReAct loop, Redis semantic cache, RBAC, Ragas eval.

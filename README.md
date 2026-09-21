@@ -14,13 +14,18 @@ app/
 │   ├── agent/    # ReAct loop + tools (skeleton)
 │   └── llm/      # Gemini client + prompts
 └── utils/
-data/             # PDF nguồn + chroma persist
+data/             # tài liệu nguồn + chroma persist
 eval/             # Ragas evaluation scaffold
 tests/
 docs/
+├── architecture.md    # Tài liệu hệ thống + sơ đồ
+├── learning-guide.md  # Tài liệu học tập / onboarding
+└── notes.txt
 ```
 
-Chi tiết hơn: [docs/architecture.md](docs/architecture.md)
+Chi tiết hơn:
+- [docs/architecture.md](docs/architecture.md) — tài liệu hệ thống + sơ đồ
+- [docs/learning-guide.md](docs/learning-guide.md) — tài liệu học tập / onboarding
 
 ## Setup nhanh
 
