@@ -3,13 +3,43 @@
 > Tài liệu kỹ thuật cho vận hành / phát triển.  
 > Mục tiêu sản phẩm: agent trả lời kiến thức **quy định đất đai** dựa trên kho văn bản nội bộ, sẵn sàng mở rộng ReAct + tool ngoại vi.
 
-**Trạng thái:** Phase 1 runtime đã chạy; Phase 2 (ReAct loop đầy đủ, Redis semantic cache, RBAC) đang scaffold / thiết kế.
+**Trạng thái:** Phase 1 runtime đã chạy; Phase 2–3 (ReAct đầy đủ, Semantic Cache, RBAC, Rerank, Ragas) đang scaffold / thiết kế theo đặc tả dưới đây.
+
+Tài liệu học tập: [learning-guide.md](./learning-guide.md).
+
+---
+
+## 0. Tech stack
+
+| Lớp | Công nghệ | Vai trò |
+|-----|-----------|---------|
+| Runtime | Python ≥ 3.11 | Ngôn ngữ chính |
+| Package / env | **uv** (khuyến nghị) hoặc pip | Cài dependency, venv |
+| Orchestration LLM | **LangChain** (+ text-splitters, community loaders) | Ingest, retrieve, tool wiring |
+| Vector DB | **ChromaDB** | Lưu embedding + metadata filter |
+| LLM / Embedding | **Google Gemini** (Flash family; cấu hình qua `.env`) | Sinh câu trả lời + embed |
+| API | **FastAPI** + Uvicorn | HTTP `/health`, `/chat` |
+| Cache / memory | **Redis** | Semantic cache + session (phase 2) |
+| Đóng gói | **Docker Compose** | `api` + `redis` + `chromadb` |
+| Đánh giá | **Ragas** (LLM-as-a-judge) | Faithfulness / chống hallucination |
+
+```mermaid
+flowchart LR
+    subgraph App
+        FastAPI --> LangChain
+        LangChain --> Gemini[Gemini Flash]
+        LangChain --> Chroma[(ChromaDB)]
+        LangChain --> Redis[(Redis)]
+    end
+    Docker --> App
+    uv --> App
+```
 
 ---
 
 ## 1. Tổng quan hệ thống
 
-Hệ thống là API FastAPI nhận câu hỏi, retrieve ngữ cảnh từ Chroma (đã ingest văn bản pháp luật), rồi sinh câu trả lời bằng Gemini.
+Hệ thống là API FastAPI nhận câu hỏi, retrieve ngữ cảnh từ Chroma (đã ingest văn bản pháp luật), rồi sinh câu trả lời bằng Gemini — có thể mở rộng cache, RBAC, rerank và ReAct tools.
 
 ```mermaid
 flowchart TB
@@ -30,7 +60,7 @@ flowchart TB
     subgraph RAG["app/services/rag"]
         IN[ingest PDF/DOCX/DOC]
         VS[vectorstore Chroma]
-        RT[retriever top-k]
+        RT[retriever + optional rerank]
     end
 
     subgraph LLM["app/services/llm"]
@@ -42,7 +72,7 @@ flowchart TB
     subgraph Data["Lưu trữ"]
         DOC[(data/docs<br/>nguồn VBPL)]
         CH[(data/chroma<br/>vector index)]
-        RD[(Redis — phase 2)]
+        RD[(Redis<br/>semantic cache)]
     end
 
     U --> H & C
@@ -52,8 +82,8 @@ flowchart TB
     RT --> VS --> CH
     IN --> DOC
     IN --> EMB --> CH
-    Tools -.->|scaffold| RA
-    RD -.->|semantic cache / memory| RA
+    Tools -.->|ReAct phase 2| RA
+    RD -.->|TTL + versioning| RA
 ```
 
 | Thành phần | Vai trò | Trạng thái |
@@ -65,8 +95,10 @@ flowchart TB
 | Gemini LLM + embeddings | Sinh câu trả lời / vector | ✅ |
 | Tools + `execute_tool` | Metadata tool + Observation an toàn khi lỗi | ✅ scaffold |
 | ReAct loop đầy đủ | Thought → Action → Observation lặp | 🔲 phase 2 |
-| Redis semantic cache | Cache câu hỏi tương tự | 🔲 thiết kế |
-| RBAC metadata filter | Pre-filter theo role | 🔲 thiết kế |
+| Redis semantic cache | TTL + versioning, chặn câu hỏi lặp | 🔲 phase 2 |
+| RBAC metadata filter | Pre-filter `where` trong Chroma | 🔲 phase 2 |
+| Reranking | Lấy ~20 chunk → giữ top 5 | 🔲 phase 3 |
+| Ragas Faithfulness | LLM-as-a-judge, kiểm soát hallucination | 🔲 phase 3 |
 
 ---
 
@@ -80,6 +112,7 @@ flowchart LR
     end
     subgraph core["core/"]
         cfg[config.py]
+        redis_c[redis.py]
     end
     subgraph models["models/"]
         sch[schemas]
@@ -88,41 +121,52 @@ flowchart LR
         rag[rag/]
         agent[agent/]
         llm[llm/]
+        cache[cache/]
+        auth[auth/]
     end
 
     routes -->|gọi| agent
     agent -->|retrieve| rag
     agent -->|prompt + invoke| llm
+    agent -->|hit/miss| cache
+    agent -->|build filter| auth
+    cache --> redis_c
     rag --> cfg
     llm --> cfg
     routes --> sch
+    deps --> auth
 ```
 
 | Thư mục | Trách nhiệm | Không làm |
 |---------|-------------|-----------|
 | `app/api` | HTTP, validate request/response | Business RAG / LLM |
-| `app/core` | Settings từ `.env` | Logic nghiệp vụ |
+| `app/core` | Settings `.env`, Redis client | Logic nghiệp vụ |
 | `app/models` | Pydantic schemas | I/O DB / LLM |
-| `app/services/rag` | Ingest, chunk, Chroma, retrieve | Chọn tool / HTTP |
+| `app/services/rag` | Ingest, chunk, Chroma, retrieve, rerank | Chọn tool / HTTP |
 | `app/services/agent` | Orchestration, tool metadata, an toàn tool | Chi tiết embedding |
 | `app/services/llm` | Client Gemini, prompts | Routing HTTP |
-| `eval/` | Ragas scaffold | Runtime API |
+| `app/services/cache` | Semantic cache Redis | Gọi Chroma / LLM sinh câu |
+| `app/services/auth` | Role → metadata filter RBAC | Query vector |
+| `eval/` | Ragas (Faithfulness, …) | Runtime API |
 | `data/docs` | Tài liệu nguồn | — |
 | `data/chroma` | Index vector (gitignore) | — |
 
-**Vị trí thiết kế (chưa code đầy đủ) — SoC đã chốt:**
+**Vị trí thiết kế — SoC đã chốt:**
 
 | Concern | Đặt tại |
 |---------|---------|
-| Semantic Cache (Redis) | `services/cache/semantic.py` + `core/redis.py` |
+| Semantic Cache (Redis + TTL/version) | `services/cache/semantic.py` + `core/redis.py` |
 | RBAC → metadata filter | `services/auth/rbac.py`; identity ở `api/deps.py` |
 | Apply `where` lúc retrieve | `services/rag/retriever.py` (nhận filter, không biết role) |
+| Reranker | `services/rag/rerank.py` (nhận candidates, trả top-n) |
 
 ---
 
-## 3. Pipeline ingest (đã triển khai)
+## 3. Dữ liệu & lưu trữ (pipeline)
 
-Nguồn: `.pdf` / `.docx` / `.doc` (Windows COM cho `.doc`) → chunk theo cấu trúc pháp lý → embedding → Chroma.
+Chuỗi chuẩn:
+
+**RecursiveCharacterTextSplitter (có overlap) → Embedding (Gemini) → ChromaDB**
 
 ```mermaid
 flowchart LR
@@ -131,9 +175,9 @@ flowchart LR
     B -->|.docx| C2[Docx2txtLoader]
     B -->|.doc| C3[LegacyDocLoader<br/>Word COM]
     C1 & C2 & C3 --> D[Document + metadata<br/>source, filename, filetype]
-    D --> E[RecursiveCharacterTextSplitter<br/>LEGAL_SEPARATORS]
+    D --> E[RecursiveCharacterTextSplitter<br/>LEGAL_SEPARATORS + overlap]
     E --> F[Gemini Embeddings]
-    F --> G[(Chroma<br/>data/chroma)]
+    F --> G[(ChromaDB<br/>data/chroma)]
 ```
 
 **API ingest chính:**
@@ -145,6 +189,8 @@ flowchart LR
 | `get_legal_text_splitter()` | Separators: Chương → Mục → Điều → Khoản → điểm |
 
 **Tham số mặc định:** `chunk_size=1000`, `chunk_overlap=200` (`app/core/config.py`).
+
+Overlap giữ ngữ cảnh biên giữa hai chunk; separators pháp lý tránh cắt giữa `Điều` / `Khoản`.
 
 ---
 
@@ -172,6 +218,20 @@ sequenceDiagram
 ```
 
 **Lưu ý:** Phase 1 gọi retrieve trực tiếp trong `run_agent`, chưa qua ReAct / Function Calling. Tool `rag_search` đã khai báo để phase 2 gắn vào loop.
+
+**Luồng mục tiêu (phase 2–3)** — cache → RBAC filter → retrieve rộng → rerank → LLM:
+
+```mermaid
+flowchart TB
+    Q[Query] --> SC{Semantic cache<br/>hit?}
+    SC -->|hit + còn TTL| ANS[Trả answer cached]
+    SC -->|miss| RBAC[RBAC build where filter]
+    RBAC --> RET[Retrieve ~20 chunks<br/>Chroma + metadata]
+    RET --> RR[Rerank → top 5]
+    RR --> LLM[Gemini generate]
+    LLM --> STORE[Ghi cache<br/>TTL + corpus_version]
+    STORE --> ANS2[Trả answer]
+```
 
 ---
 
@@ -207,9 +267,111 @@ hint=... Agent tự xử lý tiếp, không crash API ...
 
 Nguyên tắc: **lỗi tool ≠ lỗi HTTP 500**. Chỉ orchestration / LLM hệ thống mới được bubble lên `chat.py`.
 
+Agent dùng **ReAct loop + Function Calling**; tool ngoại vi (ví dụ tỷ giá) luôn đi qua `execute_tool` (try/except → Observation).
+
 ---
 
-## 6. Hạ tầng Docker Compose
+## 6. Tối ưu & mở rộng
+
+### 6.1 Semantic Cache (Redis + TTL + Versioning)
+
+**Mục tiêu:** chặn câu hỏi lặp / gần nghĩa → giảm gọi retrieve + LLM, giảm tải hệ thống.
+
+| Thành phần | Mô tả |
+|------------|--------|
+| Key | Embedding của query (hoặc hash gần đúng) + `corpus_version` |
+| Value | `answer` (+ optional `sources`) đã serialize |
+| TTL | Hết hạn tự động (ví dụ 1h–24h, cấu hình `.env`) |
+| Versioning | Khi re-ingest / đổi index → tăng `corpus_version` → cache cũ coi như miss |
+
+```mermaid
+flowchart TB
+    Q[Query] --> E[Embed query]
+    E --> L[Lookup Redis<br/>nearest + version khớp?]
+    L -->|hit + TTL còn| HIT[Return cached answer]
+    L -->|miss / hết hạn / sai version| MISS[Chạy RAG + LLM đầy đủ]
+    MISS --> W[SET Redis<br/>TTL + corpus_version]
+```
+
+**File dự kiến:** `app/services/cache/semantic.py`, client `app/core/redis.py`.
+
+### 6.2 Reranking (20 → top 5)
+
+**Mục tiêu:** retrieve rộng để không bỏ sót, rồi xếp hạng lại trước khi đưa vào prompt.
+
+| Bước | Số lượng | Ý nghĩa |
+|------|----------|---------|
+| Retrieve | ~20 chunks | Recall cao |
+| Rerank | giữ **top 5** | Precision cao, context gọn |
+
+**Hiệu quả kỳ vọng (đặc tả sản phẩm):**
+
+| Chỉ số | Ước lượng |
+|--------|-----------|
+| Giảm context đưa vào LLM | ~**75%** (20 → 5) |
+| Tiết kiệm chi phí API | ~**65%** |
+| Giảm latency | ~**20–35%** |
+
+```mermaid
+flowchart LR
+    Q[Query] --> R[Chroma retrieve k=20]
+    R --> RR[Reranker]
+    RR --> T5[Top 5 chunks]
+    T5 --> P[Prompt + Gemini]
+```
+
+**File dự kiến:** `app/services/rag/rerank.py`; gọi từ retriever/agent sau similarity search.
+
+### 6.3 Bảo mật — Metadata Pre-filtering (RBAC) trong ChromaDB
+
+**Mục tiêu:** user chỉ retrieve được chunk thuộc phạm vi quyền — filter **ngay trong Chroma** (`where`), không lọc sau khi đã lấy hết.
+
+Ví dụ metadata gắn lúc ingest:
+
+| Field | Ví dụ giá trị |
+|-------|----------------|
+| `audience` | `public`, `internal`, `legal_staff` |
+| `doc_level` | `law`, `decree`, `circular`, `guide` |
+| `region` | `nationwide`, `province_x` |
+
+Ví dụ: role `citizen` → `where = {"audience": {"$in": ["public"]}}`.
+
+```mermaid
+flowchart TB
+    REQ[Request + identity] --> DEP[api/deps<br/>UserContext]
+    DEP --> POL[services/auth/rbac<br/>role to where]
+    POL --> RET[retriever<br/>similarity + where]
+    RET --> CH[(ChromaDB)]
+    CH -->|chỉ chunk được phép| CTX[Context an toàn]
+```
+
+**SoC:** `auth` quyết định filter; `retriever` chỉ apply; không hard-code role trong Chroma query builder.
+
+---
+
+## 7. Đánh giá — Ragas (LLM-as-a-judge)
+
+**Mục tiêu:** đo **Faithfulness** — câu trả lời có bám context đã retrieve không → kiểm soát **hallucination** (ảo giác điều/khoản).
+
+| Khái niệm | Ý nghĩa |
+|-----------|---------|
+| LLM-as-a-judge | Model chấm điểm câu trả lời theo rubric / metric Ragas |
+| Faithfulness | Claim trong answer có được hỗ trợ bởi context không |
+| Eval offline | Chạy trên bộ hỏi–đáp mẫu trong `eval/` — không chặn request realtime |
+
+```mermaid
+flowchart LR
+    DS[Dataset<br/>question + context + answer] --> RG[Ragas]
+    RG --> F[Faithfulness score]
+    F --> REP[Báo cáo / CI]
+```
+
+**Chạy (scaffold):** `python -m eval.run_ragas`  
+**Phụ thuộc optional:** `.[eval]` trong `pyproject.toml`.
+
+---
+
+## 8. Hạ tầng Docker Compose
 
 ```mermaid
 flowchart LR
@@ -221,12 +383,12 @@ flowchart LR
 | Service | Port | Mục đích |
 |---------|------|----------|
 | `api` | 8000 | FastAPI |
-| `redis` | 6379 | Memory / semantic cache (phase 2) |
+| `redis` | 6379 | Semantic cache + memory (phase 2) |
 | `chromadb` | 8001 | Vector DB server (hiện ingest vẫn dùng local persist `data/chroma`) |
 
 ---
 
-## 7. API & cấu hình
+## 9. API & cấu hình
 
 | Method | Path | Body / Response |
 |--------|------|-----------------|
@@ -239,28 +401,29 @@ flowchart LR
 - `CHROMA_PERSIST_DIR`, `DATA_DIR`
 - `CHUNK_SIZE`, `CHUNK_OVERLAP`, `TOP_K`
 - `REDIS_URL` (phase 2)
+- *(phase 2–3 dự kiến)* `CACHE_TTL_SECONDS`, `CORPUS_VERSION`, `RETRIEVE_K`, `RERANK_TOP_N`
 
 ---
 
-## 8. Lộ trình
+## 10. Lộ trình
 
 ```mermaid
 flowchart LR
     subgraph P1["Phase 1 — hiện tại"]
-        A1[Ingest PDF/DOCX/DOC<br/>chunk pháp lý]
+        A1[Ingest PDF/DOCX/DOC<br/>chunk pháp lý + overlap]
         A2[Chat: retrieve to Gemini<br/>Chroma local]
         A3[Tool scaffold<br/>Observation an toàn]
     end
 
     subgraph P2["Phase 2"]
         B1[ReAct + Function Calling<br/>execute_tool trong loop]
-        B2[Redis semantic cache<br/>services/cache]
-        B3[RBAC metadata filter<br/>services/auth]
+        B2[Redis semantic cache<br/>TTL + versioning]
+        B3[RBAC metadata filter<br/>Chroma where]
     end
 
     subgraph P3["Phase 3"]
-        C1[Reranker<br/>cải thiện precision]
-        C2[Ragas eval<br/>faithfulness / relevancy]
+        C1[Rerank 20 to top 5<br/>giảm context / cost / latency]
+        C2[Ragas Faithfulness<br/>LLM-as-a-judge]
     end
 
     P1 --> P2 --> P3
@@ -268,7 +431,7 @@ flowchart LR
 
 ---
 
-## 9. Tài liệu liên quan
+## 11. Tài liệu liên quan
 
 | File | Đối tượng |
 |------|-----------|
@@ -278,4 +441,4 @@ flowchart LR
 
 ---
 
-*Cập nhật theo codebase hiện tại. Khi ReAct loop / cache / RBAC được merge, bổ sung mục tương ứng vào sơ đồ runtime.*
+*Đặc tả tối ưu (cache TTL/version, rerank KPI, RBAC, Ragas) là mục tiêu triển khai; runtime hiện tại vẫn là Phase 1 cho đến khi các module tương ứng được merge.*
