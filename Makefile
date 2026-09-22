@@ -24,7 +24,7 @@ endif
 
 .DEFAULT_GOAL := help
 
-.PHONY: help run ingest install docker-up docker-down
+.PHONY: help run ingest install docker-up docker-down redis-up redis-down
 
 help:
 	@echo.
@@ -33,6 +33,8 @@ help:
 	@echo   make install   - Cai deps bang uv (sync + extra dev)
 	@echo   make docker-up - docker compose up --build
 	@echo   make docker-down - docker compose down
+	@echo   make redis-up   - chi chay Redis (dev local + uvicorn tren may)
+	@echo   make redis-down - dung container Redis
 	@echo.
 	@echo   Bien tuy chon: HOST=$(HOST) PORT=$(PORT) PYTHON=$(PYTHON)
 	@echo.
@@ -51,3 +53,9 @@ docker-up:
 
 docker-down:
 	docker compose down
+
+redis-up:
+	docker compose up -d redis
+
+redis-down:
+	docker compose stop redis

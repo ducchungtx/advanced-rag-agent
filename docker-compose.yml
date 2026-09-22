@@ -7,9 +7,13 @@ services:
       - .env
     volumes:
       - ./data:/app/data
+    environment:
+      REDIS_URL: redis://redis:6379/0
     depends_on:
-      - redis
-      - chromadb
+      redis:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
     restart: unless-stopped
 
   redis:
@@ -18,6 +22,11 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     restart: unless-stopped
 
   chromadb:

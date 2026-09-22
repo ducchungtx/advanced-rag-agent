@@ -70,7 +70,7 @@ flowchart TB
 | Overlap | Phần chồng giữa hai chunk — tránh mất câu ở biên |
 | Embedding | Vector số từ Gemini embedding model |
 | Vector store | Chroma tại `data/chroma` |
-| top_k | Số chunk lấy về (mặc định 4 ở phase 1) |
+| top_k | Số chunk lấy về (mặc định 4; Phase 3 sẽ retrieve rộng rồi rerank) |
 
 ---
 
@@ -296,13 +296,13 @@ flowchart TB
 
 ## 13. Thực hành gợi ý
 
-1. **Ingest:** bỏ VBPL vào `DATA_DIR`, chạy `ingest_directory()`, xem số chunk.  
+1. **Ingest:** bỏ VBPL vào `DATA_DIR`, chạy `ingest_directory()`, xem số chunk (mặc định `audience=public`).  
 2. **Retrieve smoke:** hỏi rõ Điều/Khoản, đối chiếu chunk.  
-3. **Chat:** `POST /chat` — kiểm tra `sources`.  
+3. **Chat:** `POST /chat` — kiểm tra `sources`; thử header `X-User-Role: citizen|staff|legal_staff`.  
 4. **Tool description:** đọc hai description trong `tools.py`.  
 5. **Lỗi an toàn:** `execute_tool("get_exchange_rate")` → `[TOOL_ERROR]`, không traceback client.  
-6. *(Sau phase 2)* Thử hỏi trùng 2 lần — lần 2 kỳ vọng cache hit.  
-7. *(Sau phase 3)* Chạy `python -m eval.run_ragas` — đọc Faithfulness.
+6. **Semantic cache (Phase 2):** bật Redis (`docker compose up -d redis`), hỏi trùng / gần nghĩa 2 lần — lần 2 kỳ vọng cache hit (log). Đổi `CORPUS_VERSION` sau re-ingest.  
+7. *(Phase 3)* Chạy `python -m eval.run_ragas` — đọc Faithfulness.
 
 ---
 
@@ -327,8 +327,8 @@ flowchart TB
 
 1. [architecture.md](./architecture.md) — stack, tối ưu, RBAC, Ragas, Docker, lộ trình  
 2. [../README.md](../README.md) — cài đặt và chạy nhanh  
-3. Code: `app/services/rag/ingest.py`, `app/services/agent/tools.py`
+3. Code: `app/services/agent/react.py`, `app/services/agent/tools.py`, `app/services/cache/semantic.py`, `app/services/auth/rbac.py`
 
 ---
 
-*Tài liệu học tập — ưu tiên trực quan và khái niệm. Chi tiết triển khai lấy từ codebase và architecture.md.*
+*Tài liệu học tập — ưu tiên trực quan và khái niệm. Runtime hiện tại là Phase 2 (ReAct + cache + RBAC); chi tiết triển khai lấy từ codebase và architecture.md.*
