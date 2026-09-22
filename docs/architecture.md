@@ -173,7 +173,7 @@ flowchart LR
     A[Thư mục DATA_DIR<br/>data/docs] --> B{Phần mở rộng}
     B -->|.pdf| C1[PyPDFLoader]
     B -->|.docx| C2[Docx2txtLoader]
-    B -->|.doc| C3[LegacyDocLoader<br/>Word COM]
+    B -->|.doc| C3[LegacyDocLoader<br/>Word COM / LibreOffice]
     C1 & C2 & C3 --> D[Document + metadata<br/>source, filename, filetype]
     D --> E[RecursiveCharacterTextSplitter<br/>LEGAL_SEPARATORS + overlap]
     E --> F[Gemini Embeddings]

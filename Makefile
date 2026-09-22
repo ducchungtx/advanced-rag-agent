@@ -37,6 +37,7 @@ help:
 	@echo   make redis-down - dung container Redis
 	@echo.
 	@echo   Bien tuy chon: HOST=$(HOST) PORT=$(PORT) PYTHON=$(PYTHON)
+	@echo   .doc: Windows = Word+pywin32; macOS/Linux = LibreOffice (soffice)
 	@echo.
 
 run:

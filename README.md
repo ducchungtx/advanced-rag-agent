@@ -31,25 +31,51 @@ Chi tiết hơn:
 
 ## Setup nhanh
 
+### Windows
+
 ```bash
-# 1. Tạo venv + cài deps (khuyến nghị uv)
+# 1. Tạo venv + cài deps (khuyến nghị uv) — pywin32 được cài tự động
 uv sync --all-extras
 
 # 2. Cấu hình env
-copy .env.example .env   # Windows
+copy .env.example .env
 # điền GOOGLE_API_KEY; kiểm tra REDIS_URL, CORPUS_VERSION
 
 # 3. Bật Redis (semantic cache) — cần Docker Desktop
 docker compose up -d redis
 
-# 4. Ingest PDF/DOCX/DOC (gắn metadata audience=public)
+# 4. Ingest PDF/DOCX/DOC — .doc cần Microsoft Word (COM) đã cài
 # Đặt file vào DATA_DIR (mặc định ./data/docs)
-uv run python -c "from app.services.rag.ingest import ingest_directory; print(ingest_directory())"
+make ingest
+# hoặc: uv run python -u scripts/run_ingest.py
 
 # 5. Chạy API
-uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-# hoặc: make run
+make run
 ```
+
+### macOS / Linux
+
+```bash
+# 1. Tạo venv + cài deps
+uv sync --all-extras
+
+# 2. Cấu hình env
+cp .env.example .env
+# điền GOOGLE_API_KEY; kiểm tra REDIS_URL, CORPUS_VERSION
+
+# 3. LibreOffice — bắt buộc nếu ingest file .doc (Word 97–2003)
+# macOS: brew install --cask libreoffice
+# Linux: apt/yum install libreoffice (đảm bảo `soffice` có trên PATH)
+
+# 4. Bật Redis
+docker compose up -d redis
+
+# 5. Ingest + chạy API
+make ingest
+make run
+```
+
+**Đọc `.doc` theo môi trường:** Windows ưu tiên Word COM (`pywin32`); macOS/Linux (và Windows không có Word) dùng LibreOffice headless (`soffice`).
 
 Swagger UI: http://127.0.0.1:8000/docs
 

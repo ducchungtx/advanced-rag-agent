@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 from langchain_chroma import Chroma
@@ -31,36 +36,28 @@ LEGAL_SEPARATORS = [
     "",
 ]
 
+_SOFFICE_CANDIDATES = (
+    "soffice",
+    "libreoffice",
+    "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+    "/opt/homebrew/bin/soffice",
+    "/usr/local/bin/soffice",
+    "/usr/bin/soffice",
+    r"C:\Program Files\LibreOffice\program\soffice.exe",
+    r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+)
+
 
 class LegacyDocLoader:
-    """Load file .doc (Word 97–2003) qua Microsoft Word COM trên Windows."""
+    """Load file .doc (Word 97–2003): Windows dùng Word COM, macOS/Linux dùng LibreOffice."""
 
     def __init__(self, file_path: str) -> None:
         self.file_path = file_path
 
     def load(self) -> list[Document]:
-        try:
-            import win32com.client  # type: ignore[import-untyped]
-        except ImportError as exc:
-            raise ImportError(
-                "Cần pywin32 để đọc .doc. Cài: pip install pywin32"
-            ) from exc
-
-        path = str(Path(self.file_path).resolve())
-        word = win32com.client.Dispatch("Word.Application")
-        word.Visible = False
-        try:
-            doc = word.Documents.Open(path, ReadOnly=True)
-            try:
-                text = str(doc.Content.Text or "").strip()
-            finally:
-                doc.Close(False)
-        finally:
-            word.Quit()
-
-        if not text:
-            return []
-        return [Document(page_content=text, metadata={"source": self.file_path})]
+        path = Path(self.file_path)
+        docs = _load_legacy_doc_paths([path])
+        return docs
 
 
 _LOADERS = {
@@ -132,17 +129,31 @@ def ingest_directory(directory: str | Path | None = None) -> int:
 
 
 def _load_legacy_docs(data_dir: Path) -> list[Document]:
-    """Load toàn bộ .doc bằng một phiên Word COM (nhanh hơn mở từng file)."""
+    """Load toàn bộ .doc (Windows: Word COM; macOS/Linux: LibreOffice)."""
     paths = sorted(p for p in data_dir.rglob("*.doc") if p.is_file())
+    return _load_legacy_doc_paths(paths)
+
+
+def _load_legacy_doc_paths(paths: list[Path]) -> list[Document]:
+    """Chọn backend đọc .doc theo OS; fallback LibreOffice nếu Word COM không có."""
     if not paths:
         return []
 
-    try:
-        import win32com.client  # type: ignore[import-untyped]
-    except ImportError as exc:
-        raise ImportError(
-            "Cần pywin32 để đọc .doc. Cài: pip install pywin32"
-        ) from exc
+    if sys.platform == "win32":
+        try:
+            return _load_legacy_docs_win32(paths)
+        except ImportError:
+            print(
+                "pywin32/Word COM không khả dụng — fallback LibreOffice cho .doc",
+                flush=True,
+            )
+
+    return _load_legacy_docs_libreoffice(paths)
+
+
+def _load_legacy_docs_win32(paths: list[Path]) -> list[Document]:
+    """Load .doc bằng một phiên Microsoft Word COM (Windows)."""
+    import win32com.client  # type: ignore[import-untyped]
 
     documents: list[Document] = []
     word = win32com.client.Dispatch("Word.Application")
@@ -159,10 +170,97 @@ def _load_legacy_docs(data_dir: Path) -> list[Document]:
             item = Document(page_content=text, metadata={"source": str(path)})
             _attach_source_metadata([item], path)
             documents.append(item)
-            print(f"Loaded .doc: {path.name}")
+            print(f"Loaded .doc (Word): {path.name}", flush=True)
     finally:
         word.Quit()
     return documents
+
+
+def _find_soffice() -> str | None:
+    """Tìm binary LibreOffice trên macOS / Linux / Windows."""
+    for candidate in _SOFFICE_CANDIDATES:
+        if os.path.sep in candidate or (sys.platform == "win32" and "\\" in candidate):
+            if Path(candidate).is_file():
+                return candidate
+            continue
+        found = shutil.which(candidate)
+        if found:
+            return found
+    return None
+
+
+def _load_legacy_docs_libreoffice(paths: list[Path]) -> list[Document]:
+    """Convert .doc → .txt bằng LibreOffice headless, rồi đọc text."""
+    soffice = _find_soffice()
+    if not soffice:
+        raise RuntimeError(
+            "Không đọc được .doc: cần Microsoft Word + pywin32 (Windows) "
+            "hoặc LibreOffice (`soffice` trên PATH / macOS: brew install --cask libreoffice)."
+        )
+
+    documents: list[Document] = []
+    with tempfile.TemporaryDirectory(prefix="rag-doc-") as tmp:
+        tmp_dir = Path(tmp)
+        # Tên unique tránh đụng basename trùng giữa các thư mục con.
+        staging: list[tuple[Path, Path]] = []
+        for idx, path in enumerate(paths):
+            staged = tmp_dir / f"{idx:04d}_{path.name}"
+            try:
+                staged.symlink_to(path.resolve())
+            except OSError:
+                shutil.copy2(path, staged)
+            staging.append((path, staged))
+
+        cmd = [
+            soffice,
+            "--headless",
+            "--norestore",
+            "--convert-to",
+            "txt:Text",
+            "--outdir",
+            str(tmp_dir),
+            *[str(staged) for _, staged in staging],
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or "").strip()
+            raise RuntimeError(f"LibreOffice convert .doc thất bại (code={result.returncode}): {err}")
+
+        for path, staged in staging:
+            txt_path = tmp_dir / f"{staged.stem}.txt"
+            if not txt_path.is_file():
+                print(f"Skip .doc (không có txt sau convert): {path.name}", flush=True)
+                continue
+            text = txt_path.read_text(encoding="utf-8-sig", errors="replace").strip()
+            if not text:
+                continue
+            item = Document(page_content=text, metadata={"source": str(path)})
+            _attach_source_metadata([item], path)
+            documents.append(item)
+            print(f"Loaded .doc (LibreOffice): {path.name}", flush=True)
+
+    return documents
+
+
+def _pid_alive(pid: int) -> bool:
+    """True nếu process còn sống (Windows + Unix)."""
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        out = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return str(pid) in out.stdout and "No tasks" not in out.stdout
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def get_legal_text_splitter() -> RecursiveCharacterTextSplitter:
@@ -220,17 +318,6 @@ def _write_chunks_with_rate_limit(
     persist = Path(settings.chroma_persist_dir)
     persist.mkdir(parents=True, exist_ok=True)
     lock_path = persist / ".ingest.lock"
-
-    def _pid_alive(pid: int) -> bool:
-        import subprocess
-
-        out = subprocess.run(
-            ["tasklist", "/FI", f"PID eq {pid}"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        return str(pid) in out.stdout and "No tasks" not in out.stdout
 
     # Exclusive create để tránh 2 process chạy song song
     try:
