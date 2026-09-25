@@ -4,6 +4,7 @@ Tài liệu chính:
 - docs/architecture.md — kiến trúc hệ thống + sơ đồ Mermaid
 - docs/learning-guide.md — hướng dẫn học tập / onboarding
 
-Trạng thái: Phase 2 đã implement — ReAct + Function Calling, Redis semantic cache (TTL + corpus_version + cosine threshold), RBAC metadata where (X-User-Role).
+Trạng thái: Phase 3 — ReAct + Redis semantic cache + RBAC + cross-encoder rerank (20→5) + Ragas Faithfulness (offline).
 Cần: docker compose up -d redis; sau khi thêm audience metadata phải re-ingest; tăng CORPUS_VERSION khi đổi index.
-Tiếp theo (Phase 3): Rerank 20→5, Ragas Faithfulness.
+Smoke rerank: python -u scripts/rerank_smoke.py
+Eval: uv run --extra eval python -m eval.run_ragas

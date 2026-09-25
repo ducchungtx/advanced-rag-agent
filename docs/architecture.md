@@ -3,7 +3,7 @@
 > Tài liệu kỹ thuật cho vận hành / phát triển.  
 > Mục tiêu sản phẩm: agent trả lời kiến thức **quy định đất đai** dựa trên kho văn bản nội bộ, sẵn sàng mở rộng ReAct + tool ngoại vi.
 
-**Trạng thái:** Phase 1–2 runtime đã chạy (ReAct + Redis semantic cache + RBAC); Phase 3 (Rerank, Ragas) đang scaffold / thiết kế theo đặc tả dưới đây.
+**Trạng thái:** Phase 1–3 runtime đã có (ReAct + Redis semantic cache + RBAC + cross-encoder rerank); Ragas Faithfulness chạy offline qua `eval/run_ragas.py`.
 
 Tài liệu học tập: [learning-guide.md](./learning-guide.md).
 
@@ -97,8 +97,8 @@ flowchart TB
 | ReAct loop đầy đủ | Thought → Action → Observation lặp | ✅ |
 | Redis semantic cache | TTL + versioning, chặn câu hỏi lặp | ✅ |
 | RBAC metadata filter | Pre-filter `where` trong Chroma | ✅ |
-| Reranking | Lấy ~20 chunk → giữ top 5 | 🔲 phase 3 |
-| Ragas Faithfulness | LLM-as-a-judge, kiểm soát hallucination | 🔲 phase 3 |
+| Reranking | Lấy ~20 chunk → cross-encoder → giữ top 5 | ✅ |
+| Ragas Faithfulness | LLM-as-a-judge, kiểm soát hallucination | ✅ offline (`eval/`) |
 
 ---
 
@@ -158,7 +158,7 @@ flowchart LR
 | Semantic Cache (Redis + TTL/version) | `services/cache/semantic.py` + `core/redis.py` |
 | RBAC → metadata filter | `services/auth/rbac.py`; identity ở `api/deps.py` |
 | Apply `where` lúc retrieve | `services/rag/retriever.py` (nhận filter, không biết role) |
-| Reranker | `services/rag/rerank.py` (nhận candidates, trả top-n) |
+| Reranker | `services/rag/rerank.py` (cross-encoder, nhận candidates → top-n) |
 
 ---
 
@@ -250,7 +250,7 @@ sequenceDiagram
 | RBAC | `role_to_where` → `{"audience": {"$in": [...]}}` truyền vào `rag_search` |
 | Semantic cache | Cosine embedding + `CACHE_SIMILARITY_THRESHOLD` + `CORPUS_VERSION` + scope theo role |
 | ReAct | `bind_tools` → `rag_search` / `get_exchange_rate` qua `execute_tool` |
-| Rerank | Chưa — Phase 3 |
+| Rerank | Cross-encoder local: `retrieve_k` → score cặp (query, chunk) → `rerank_top_n` |
 
 **Luồng mục tiêu Phase 3** (bổ sung rerank sau retrieve rộng):
 
@@ -338,12 +338,14 @@ flowchart TB
 
 ### 6.2 Reranking (20 → top 5)
 
-**Mục tiêu:** retrieve rộng để không bỏ sót, rồi xếp hạng lại trước khi đưa vào prompt.
+**Mục tiêu:** retrieve rộng để không bỏ sót, rồi xếp hạng lại bằng **cross-encoder local** trước khi đưa vào prompt.
 
 | Bước | Số lượng | Ý nghĩa |
 |------|----------|---------|
-| Retrieve | ~20 chunks | Recall cao |
-| Rerank | giữ **top 5** | Precision cao, context gọn |
+| Retrieve | `RETRIEVE_K` (~20) | Recall cao (bi-encoder / Chroma) |
+| Rerank | giữ `RERANK_TOP_N` (top 5) | Precision cao — score cặp (query, chunk) |
+
+**Thuật toán:** `cross-encoder/ms-marco-MiniLM-L-6-v2` (sentence-transformers). Không phụ thuộc quota Gemini embed.
 
 **Hiệu quả kỳ vọng (đặc tả sản phẩm):**
 
@@ -351,17 +353,18 @@ flowchart TB
 |--------|-----------|
 | Giảm context đưa vào LLM | ~**75%** (20 → 5) |
 | Tiết kiệm chi phí API | ~**65%** |
-| Giảm latency | ~**20–35%** |
+| Giảm latency | ~**20–35%** (phần generate; thêm chi phí CPU local cho rerank) |
 
 ```mermaid
 flowchart LR
     Q[Query] --> R[Chroma retrieve k=20]
-    R --> RR[Reranker]
+    R --> RR[CrossEncoder score]
     RR --> T5[Top 5 chunks]
     T5 --> P[Prompt + Gemini]
 ```
 
-**File dự kiến:** `app/services/rag/rerank.py`; gọi từ retriever/agent sau similarity search.
+**File:** `app/services/rag/rerank.py`; gọi từ `retriever.retrieve_documents` sau similarity search.  
+Smoke: `python -u scripts/rerank_smoke.py`.
 
 ### 6.3 Bảo mật — Metadata Pre-filtering (RBAC) trong ChromaDB
 
@@ -445,7 +448,8 @@ flowchart LR
 - `CHUNK_SIZE`, `CHUNK_OVERLAP`, `TOP_K`
 - `REDIS_URL`, `CACHE_TTL_SECONDS`, `CORPUS_VERSION`, `CACHE_SIMILARITY_THRESHOLD` (Phase 2)
 - Header RBAC: `X-User-Role` (`citizen` \| `staff` \| `legal_staff`)
-- *(Phase 3 dự kiến)* `RETRIEVE_K`, `RERANK_TOP_N`
+- `RETRIEVE_K`, `RERANK_TOP_N`, `RERANK_ENABLED`, `RERANK_MODEL` (Phase 3)
+- Eval: `uv sync --extra eval` rồi `python -m eval.run_ragas`
 
 ---
 
@@ -465,9 +469,9 @@ flowchart LR
         B3[RBAC metadata filter<br/>Chroma where]
     end
 
-    subgraph P3["Phase 3"]
-        C1[Rerank 20 to top 5<br/>giảm context / cost / latency]
-        C2[Ragas Faithfulness<br/>LLM-as-a-judge]
+    subgraph P3["Phase 3 — xong"]
+        C1[Rerank 20 to top 5<br/>cross-encoder local]
+        C2[Ragas Faithfulness<br/>eval offline]
     end
 
     P1 --> P2 --> P3
@@ -485,4 +489,4 @@ flowchart LR
 
 ---
 
-*Phase 2 đã merge (ReAct, Redis semantic cache, RBAC). Phase 3 (rerank KPI, Ragas Faithfulness) đang scaffold / thiết kế.*
+*Phase 1–3 đã có: ReAct, Redis semantic cache, RBAC, cross-encoder rerank, Ragas Faithfulness (offline).*

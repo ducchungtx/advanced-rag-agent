@@ -9,13 +9,29 @@ def retrieve_documents(
     k: int | None = None,
     *,
     where: dict | None = None,
+    rerank: bool | None = None,
 ) -> list[Document]:
     """
-    Similarity search top-k.
+    Similarity search rồi (tuỳ chọn) cross-encoder rerank.
     `where` là metadata pre-filter Chroma (RBAC) — apply tại lúc search.
     """
-    top_k = k if k is not None else settings.top_k
+    use_rerank = settings.rerank_enabled if rerank is None else rerank
+    if k is not None:
+        fetch_k = k
+    elif use_rerank:
+        fetch_k = settings.retrieve_k
+    else:
+        fetch_k = settings.top_k
+
     store = get_vectorstore()
     if where:
-        return store.similarity_search(query, k=top_k, filter=where)
-    return store.similarity_search(query, k=top_k)
+        docs = store.similarity_search(query, k=fetch_k, filter=where)
+    else:
+        docs = store.similarity_search(query, k=fetch_k)
+
+    if not use_rerank:
+        return docs
+
+    from app.services.rag.rerank import rerank_documents
+
+    return rerank_documents(query, docs, top_n=settings.rerank_top_n)

@@ -36,8 +36,14 @@ class Settings(BaseSettings):
     # RAG — chunk ~1000 ổn cho VBPL nếu separators theo Điều/Khoản
     chunk_size: int = 1000
     chunk_overlap: int = 200
-    top_k: int = 4
+    top_k: int = 4  # dùng khi rerank tắt
     data_dir: str = "./data/docs"  # hỗ trợ .pdf, .docx, .doc
+
+    # Rerank (phase 3) — retrieve rộng rồi cross-encoder giữ top-n
+    retrieve_k: int = 20
+    rerank_top_n: int = 5
+    rerank_enabled: bool = True
+    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
     # LLM behavior
     temperature: float = 0.0

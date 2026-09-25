@@ -177,11 +177,12 @@ Similarity search giỏi **recall** (không bỏ sót) nhưng prompt dài thì �
 
 ```mermaid
 flowchart LR
-    A[Retrieve ~20] --> B[Rerank] --> C[Top 5 vào prompt]
+    A[Retrieve ~20] --> B[CrossEncoder] --> C[Top 5 vào prompt]
 ```
 
 **Hình dung:** đọc 20 trang nháp → chỉ giữ 5 đoạn thật sự khớp câu hỏi.  
-Đặc tả kỳ vọng: giảm ~75% context, ~65% chi phí API, ~20–35% latency (xem architecture).
+Thuật toán trong project: **cross-encoder local** (`sentence-transformers`) — chấm từng cặp (query, chunk), không tốn quota Gemini embed.  
+Đặc tả kỳ vọng: giảm ~75% context, ~65% chi phí API generate (xem architecture).
 
 ---
 
@@ -302,7 +303,8 @@ flowchart TB
 4. **Tool description:** đọc hai description trong `tools.py`.  
 5. **Lỗi an toàn:** `execute_tool("get_exchange_rate")` → `[TOOL_ERROR]`, không traceback client.  
 6. **Semantic cache (Phase 2):** bật Redis (`docker compose up -d redis`), hỏi trùng / gần nghĩa 2 lần — lần 2 kỳ vọng cache hit (log). Đổi `CORPUS_VERSION` sau re-ingest.  
-7. *(Phase 3)* Chạy `python -m eval.run_ragas` — đọc Faithfulness.
+7. **Rerank (Phase 3):** `python -u scripts/rerank_smoke.py` — so thứ tự trước/sau.  
+8. **Ragas:** `uv run --extra eval python -m eval.run_ragas` — đọc Faithfulness.
 
 ---
 
@@ -331,4 +333,4 @@ flowchart TB
 
 ---
 
-*Tài liệu học tập — ưu tiên trực quan và khái niệm. Runtime hiện tại là Phase 2 (ReAct + cache + RBAC); chi tiết triển khai lấy từ codebase và architecture.md.*
+*Tài liệu học tập — ưu tiên trực quan và khái niệm. Runtime hiện tại là Phase 3 (ReAct + cache + RBAC + rerank; Ragas offline); chi tiết triển khai lấy từ codebase và architecture.md.*

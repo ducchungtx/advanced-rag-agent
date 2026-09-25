@@ -99,11 +99,12 @@ Services: `api` (8000), `redis` (6379), `chromadb` (8001).
 | Phase | Nội dung |
 |-------|----------|
 | 1 | RAG cơ bản: ingest PDF/DOCX/DOC → Chroma → Gemini |
-| 2 (hiện tại) | ReAct + tools + Redis semantic cache + RBAC |
-| 3 | Reranker + Ragas eval |
+| 2 | ReAct + tools + Redis semantic cache + RBAC |
+| 3 (hiện tại) | Cross-encoder rerank (20→5) + Ragas Faithfulness |
 
 ## Scripts tiện ích
 
 - `main.py` — alias chạy uvicorn `app.main:app`
 - `scripts/retrieve_smoke.py` — test nhanh retrieve
-- `python -m eval.run_ragas` — scaffold đánh giá Ragas
+- `scripts/rerank_smoke.py` — so thứ tự chunk trước/sau rerank
+- `uv run --extra eval python -m eval.run_ragas` — Faithfulness (Ragas)
